@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#080808"/>
+<title>🧠 AI Conference</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#080808;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;overscroll-behavior:none}
+  textarea{resize:none;outline:none}
+  input{outline:none}
+  button{cursor:pointer;border:none}
+  ::-webkit-scrollbar{width:3px}
+  ::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
+  @keyframes db{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-7px)}}
+  @keyframes fi{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback } = React;
+
+const PROXY = "https://ohqlidpckowpqypmrbjt.supabase.co/functions/v1/ai-proxy";
+const STORAGE_KEY = "ai_conf_scores";
+const CONTEXT_KEY = "ai_conf_context";
+
+const AIS = [
+  { id:"claude",     name:"Claude",     company:"Anthropic",    color:"#D97757", bg:"#1a0e08", emoji:"🟠", apiType:"claude" },
+  { id:"chatgpt",    name:"ChatGPT",    company:"OpenAI",       color:"#10A37F", bg:"#081a12", emoji:"🟢", apiType:"openai",      placeholder:"sk-..." },
+  { id:"gemini",     name:"Gemini",     company:"Google",       color:"#4A90D9", bg:"#08121a", emoji:"🔵", apiType:"gemini",      placeholder:"AIza..." },
+  { id:"grok",       name:"Grok",       company:"xAI",          color:"#A855F7", bg:"#110820", emoji:"🟣", apiType:"xai",         placeholder:"xai-..." },
+  { id:"perplexity", name:"Perplexity", company:"Perplexity AI",color:"#F59E0B", bg:"#1a1208", emoji:"🟡", apiType:"perplexity",  placeholder:"pplx-..." },
+];
+
+const KEYS_DEFAULT = {
+  chatgpt:"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",
+  gemini:"AIzaSyAhkOBdbhE7Qf9qSmG0Tkk8fQm5HcOLbmE",
+  grok:"xai-WNTEdDVRQaxcBSxk53QJsXPzVKpPNAW23bY0oph6iWH8TWpqLyvaPUk7ZwESW2GjqU6T3Q2vsshnKQ5F",
+  perplexity:"0a6b85c1-b3fe-416f-9b52-9d2d3924a624"
+};
+
+const P_INITIAL = (name,topic,ctx) =>
+  `${ctx?`Contexto do usuário: ${ctx}\n\n`:""}Você é ${name} em uma conferência de IAs sobre: "${topic}". Dê sua opinião direta e fundamentada. Máximo 3 parágrafos.`;
+
+const P_VOTE = (voter,target,resp) =>
+  `Você é ${voter}. Avalie a resposta de ${target} com nota 0 a 5 (0=discordo completamente, 5=concordo completamente).\n\nResposta de ${target}:\n"${resp}"\n\nResponda APENAS com JSON sem markdown:\n{"score":3,"reason":"motivo em uma frase"}`;
+
+const P_ROUND2 = (name,topic,r1,avg,ctx) =>
+  `${ctx?`Contexto do usuário: ${ctx}\n\n`:""}Você é ${name}. Na primeira rodada sobre "${topic}", você disse:\n"${r1}"\n\nRecebeu nota média ${avg}. Faça uma consideração revisada incorporando críticas. Máximo 3 parágrafos.`;
+
+const P_CONCLUSION = (name,topic,allRes,ctx) =>
+  `${ctx?`Contexto do usuário: ${ctx}\n\n`:""}Você é ${name}, a IA com maior aprovação sobre "${topic}".\n\nResumo:\n${allRes}\n\nGere a CONCLUSÃO FINAL: consensos, divergências e recomendação prática.`;
+
+async function callClaude(prompt) {
+  const r = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:prompt}]})
+  });
+  const d = await r.json();
+  return d.content?.[0]?.text || "Erro.";
+}
+
+async function callProxy(provider, prompt, apiKey) {
+  const r = await fetch(PROXY,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({provider,prompt,apiKey})
+  });
+  const d = await r.json();
+  if(d.error) throw new Error(d.error);
+  return d.text || "Sem resposta.";
+}
+
+async function callAI(ai, prompt, keys) {
+  try {
+    if(ai.apiType==="claude") return await callClaude(prompt);
+    if(ai.apiType==="openai") return await callProxy("openai",prompt,keys.chatgpt);
+    if(ai.apiType==="gemini") return await callProxy("gemini",prompt,keys.gemini);
+    if(ai.apiType==="xai")    return await callProxy("xai",prompt,keys.grok);
+    if(ai.apiType==="perplexity") return await callProxy("perplexity",prompt,keys.perplexity);
+  } catch(e){ return `⚠️ ${e.message}`; }
+}
+
+async function getVote(voter,target,resp,keys) {
+  const raw = await callAI(voter, P_VOTE(voter.name,target.name,resp.slice(0,800)), keys);
+  try {
+    const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+    return {score:Math.max(0,Math.min(5,Number(parsed.score)||0)), reason:parsed.reason||""};
+  } catch {
+    const m = raw.match(/\d/);
+    return {score:m?Math.min(5,parseInt(m[0])):2, reason:""};
+  }
+}
+
+function loadScores(){ try{ const r=localStorage.getItem(STORAGE_KEY); if(r) return JSON.parse(r); }catch{} return Object.fromEntries(AIS.map(a=>[a.id,{total:0,count:0}])); }
+function saveScores(s){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(s)); }catch{} }
+
+function Dots({color}){
+  return <div style={{display:"flex",gap:5,padding:"4px 0"}}>
+    {[0,1,2].map(i=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:color,animation:`db 1.2s ${i*0.2}s infinite`}}/>)}
+  </div>;
+}
+
+function VoteChip({voterAI,score}){
+  return <div style={{display:"flex",alignItems:"center",gap:4,background:"#141414",border:"1px solid #222",borderRadius:20,padding:"3px 10px 3px 6px",fontSize:11}}>
+    <span style={{fontSize:13}}>{voterAI.emoji}</span>
+    <div style={{display:"flex",gap:2}}>{Array.from({length:5}).map((_,i)=><div key={i} style={{width:7,height:7,borderRadius:"50%",background:i<score?voterAI.color:"#2a2a2a"}}/>)}</div>
+    <span style={{color:"#555",fontSize:10}}>{score}/5</span>
+  </div>;
+}
+
+function MessageCard({ai,text,typing,round,votes,avgScore,isWinner}){
+  const [expanded,setExpanded]=useState(false);
+  const label=["Rodada 1","Rodada 2",""][round]||"";
+  return <div style={{marginBottom:16,border:`1.5px solid ${isWinner?ai.color:ai.color+"30"}`,borderRadius:16,overflow:"hidden",background:isWinner?ai.bg+"cc":"#0e0e0e",animation:"fi 0.4s ease"}}>
+    <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${ai.color}22`}}>
+      <div style={{width:32,height:32,borderRadius:"50%",background:ai.bg,border:`2px solid ${ai.color}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>{ai.emoji}</div>
+      <div style={{flex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{color:ai.color,fontSize:13,fontWeight:700}}>{ai.name}</span>
+          {isWinner&&<span style={{fontSize:10,background:ai.color,color:"#000",padding:"1px 8px",borderRadius:20,fontWeight:700}}>⭐ MELHOR NOTA</span>}
+          <span style={{fontSize:10,color:"#555",background:"#1a1a1a",padding:"1px 8px",borderRadius:20}}>{label}</span>
+        </div>
+      </div>
+      {avgScore!==null&&<div style={{textAlign:"right",flexShrink:0}}>
+        <div style={{color:ai.color,fontSize:16,fontWeight:700}}>{avgScore.toFixed(1)}</div>
+        <div style={{color:"#555",fontSize:9}}>média</div>
+      </div>}
+    </div>
+    <div style={{padding:"12px 14px",color:"#d0d0d0",fontSize:14,lineHeight:1.75}}>
+      {typing?<Dots color={ai.color}/>:<div>
+        <div style={{whiteSpace:"pre-wrap",display:"-webkit-box",WebkitLineClamp:expanded?"none":4,WebkitBoxOrient:"vertical",overflow:expanded?"visible":"hidden"}}>{text}</div>
+        {text&&text.length>300&&<button onClick={()=>setExpanded(e=>!e)} style={{background:"none",border:"none",color:ai.color,fontSize:12,cursor:"pointer",marginTop:6,padding:0}}>{expanded?"▲ mostrar menos":"▼ ver tudo"}</button>}
+      </div>}
+    </div>
+    {votes&&votes.length>0&&<div style={{padding:"8px 14px 12px",borderTop:"1px solid #1a1a1a",display:"flex",flexWrap:"wrap",gap:6}}>
+      {votes.map((v,i)=><VoteChip key={i} voterAI={v.voterAI} score={v.score}/>)}
+    </div>}
+  </div>;
+}
+
+function ConclusionCard({text,typing}){
+  return <div style={{margin:"20px 0",border:"1.5px solid #FFD700aa",borderRadius:16,overflow:"hidden",background:"#141200",animation:"fi 0.4s ease"}}>
+    <div style={{padding:"12px 16px",background:"#FFD70018",borderBottom:"1px solid #FFD70033",display:"flex",gap:8,alignItems:"center"}}>
+      <span style={{fontSize:20}}>⚡</span>
+      <div>
+        <div style={{color:"#FFD700",fontSize:13,fontWeight:700}}>CONCLUSÃO FINAL</div>
+        <div style={{color:"#888",fontSize:10}}>baseada nas melhores notas da conferência</div>
+      </div>
+    </div>
+    <div style={{padding:"14px 16px",color:"#e8e8e8",fontSize:14,lineHeight:1.8,whiteSpace:"pre-wrap"}}>
+      {typing?<Dots color="#FFD700"/>:text}
+    </div>
+  </div>;
+}
+
+function Scoreboard({scores,activeAIs}){
+  const active=AIS.filter(a=>activeAIs.includes(a.id));
+  const sorted=[...active].sort((a,b)=>{
+    const sa=scores[a.id]?.count>0?scores[a.id].total/scores[a.id].count:0;
+    const sb=scores[b.id]?.count>0?scores[b.id].total/scores[b.id].count:0;
+    return sb-sa;
+  });
+  return <div style={{background:"#0a0a0a",borderTop:"1px solid #1e1e1e",padding:"10px 14px"}}>
+    <div style={{fontSize:9,color:"#444",letterSpacing:1.5,marginBottom:8,textAlign:"center"}}>RANKING GERAL (só você vê)</div>
+    <div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}>
+      {sorted.map((ai,idx)=>{
+        const s=scores[ai.id]||{total:0,count:0};
+        const avg=s.count>0?(s.total/s.count).toFixed(2):"—";
+        return <div key={ai.id} style={{display:"flex",alignItems:"center",gap:5,background:"#111",border:`1px solid ${ai.color}33`,borderRadius:20,padding:"5px 10px"}}>
+          <span style={{fontSize:9,color:"#444",fontWeight:700}}>#{idx+1}</span>
+          <span style={{fontSize:14}}>{ai.emoji}</span>
+          <div>
+            <div style={{color:ai.color,fontSize:12,fontWeight:700}}>{avg}</div>
+            <div style={{color:"#444",fontSize:9}}>{s.count} votos</div>
+          </div>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function Settings({keys,setKeys,activeAIs,toggleAI,onClose}){
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+    <div style={{background:"#1a1a1a",borderRadius:"22px 22px 0 0",maxHeight:"88vh",overflowY:"auto"}}>
+      <div style={{display:"flex",justifyContent:"center",padding:"14px 0 8px"}}><div style={{width:42,height:4,borderRadius:2,background:"#3a3a3a"}}/></div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 20px 16px",borderBottom:"1px solid #2a2a2a"}}>
+        <div>
+          <div style={{fontSize:17,fontWeight:700,color:"#fff"}}>⚙️ Configurações</div>
+          <div style={{fontSize:12,color:"#666",marginTop:3}}>Ative as IAs e configure as API keys</div>
+        </div>
+        <button onClick={onClose} style={{background:"#2a2a2a",color:"#aaa",width:34,height:34,borderRadius:10,fontSize:16}}>✕</button>
+      </div>
+      <div style={{padding:"16px 20px 32px",display:"flex",flexDirection:"column",gap:12}}>
+        {AIS.map(ai=>{
+          const active=activeAIs.includes(ai.id);
+          return <div key={ai.id} style={{background:"#222",border:`1.5px solid ${active?ai.color+"66":"#2e2e2e"}`,borderRadius:14,padding:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:ai.apiType!=="claude"?12:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:24}}>{ai.emoji}</span>
+                <div>
+                  <div style={{color:"#fff",fontSize:15,fontWeight:600}}>{ai.name}</div>
+                  <div style={{color:"#666",fontSize:11}}>{ai.company}</div>
+                </div>
+              </div>
+              <button onClick={()=>toggleAI(ai.id)} style={{background:active?ai.color:"#333",color:active?"#000":"#888",borderRadius:20,padding:"6px 16px",fontSize:12,fontWeight:700}}>
+                {active?"ATIVO":"OFF"}
+              </button>
+            </div>
+            {ai.apiType==="claude"
+              ?<div style={{fontSize:12,color:"#10A37F"}}>✓ Funciona automaticamente</div>
+              :<div>
+                <div style={{fontSize:11,color:"#777",marginBottom:6}}>API Key</div>
+                <input type="password" placeholder={ai.placeholder} value={keys[ai.id]||""} onChange={e=>setKeys(k=>({...k,[ai.id]:e.target.value}))}
+                  style={{width:"100%",background:"#141414",border:`1.5px solid ${keys[ai.id]?ai.color+"88":"#333"}`,borderRadius:10,padding:"10px 14px",color:"#e0e0e0",fontSize:13,fontFamily:"monospace",boxSizing:"border-box"}}/>
+              </div>
+            }
+          </div>;
+        })}
+      </div>
+    </div>
+  </div>;
+}
+
+function App(){
+  const [keys,setKeys]=useState(KEYS_DEFAULT);
+  const [activeAIs,setActiveAIs]=useState(["claude","chatgpt","gemini","grok","perplexity"]);
+  const [showSettings,setShowSettings]=useState(false);
+  const [showContext,setShowContext]=useState(false);
+  const [prompt,setPrompt]=useState("");
+  const [topic,setTopic]=useState("");
+  const [cards,setCards]=useState([]);
+  const [conclusionCard,setConclusionCard]=useState(null);
+  const [running,setRunning]=useState(false);
+  const [phase,setPhase]=useState("");
+  const [scores,setScores]=useState(loadScores);
+  const [userContext,setUserContext]=useState(()=>{try{return localStorage.getItem(CONTEXT_KEY)||"";}catch{return "";}});
+  const bottomRef=useRef(null);
+  const taRef=useRef(null);
+
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[cards,conclusionCard,phase]);
+
+  const toggleAI=id=>setActiveAIs(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const saveContext=val=>{setUserContext(val);try{localStorage.setItem(CONTEXT_KEY,val);}catch{}};
+
+  const updateScores=useCallback((map)=>{
+    setScores(prev=>{
+      const next={...prev};
+      for(const[id,votes] of Object.entries(map)){
+        if(!next[id]) next[id]={total:0,count:0};
+        const sum=votes.reduce((a,v)=>a+v.score,0);
+        next[id]={total:next[id].total+sum,count:next[id].count+votes.length};
+      }
+      saveScores(next);
+      return next;
+    });
+  },[]);
+
+  const run=async()=>{
+    if(!prompt.trim()||running) return;
+    const t=prompt.trim();
+    setPrompt(""); if(taRef.current) taRef.current.style.height="auto";
+    setTopic(t); setCards([]); setConclusionCard(null); setRunning(true);
+    const sel=AIS.filter(a=>activeAIs.includes(a.id));
+
+    // Round 1
+    setPhase("Rodada 1 — cada IA respondendo...");
+    setCards(sel.map(ai=>({id:`${ai.id}-r1`,ai,text:"",round:0,votes:[],avgScore:null,isWinner:false,typing:true})));
+    const r1={};
+    await Promise.all(sel.map(async ai=>{
+      const text=await callAI(ai,P_INITIAL(ai.name,t,userContext),keys);
+      r1[ai.id]=text;
+      setCards(p=>p.map(c=>c.id===`${ai.id}-r1`?{...c,text,typing:false}:c));
+    }));
+
+    // Voting R1
+    setPhase("Rodada 1 — IAs votando...");
+    const rv1={}; sel.forEach(ai=>{rv1[ai.id]=[];});
+    await Promise.all(sel.map(async voter=>{
+      for(const target of sel.filter(t=>t.id!==voter.id)){
+        const vote=await getVote(voter,target,r1[target.id],keys);
+        rv1[target.id].push({voterAI:voter,...vote});
+        setCards(p=>p.map(c=>{
+          if(c.id!==`${target.id}-r1`) return c;
+          const nv=[...c.votes,{voterAI:voter,...vote}];
+          return {...c,votes:nv,avgScore:nv.reduce((a,v)=>a+v.score,0)/nv.length};
+        }));
+      }
+    }));
+    updateScores(Object.fromEntries(sel.map(ai=>[ai.id,rv1[ai.id]])));
+
+    const avgs=sel.map(ai=>({ai,avg:rv1[ai.id].length>0?rv1[ai.id].reduce((a,v)=>a+v.score,0)/rv1[ai.id].length:0})).sort((a,b)=>b.avg-a.avg);
+    const top2=avgs.slice(0,2).map(x=>x.ai);
+    setCards(p=>p.map(c=>({...c,isWinner:top2.some(t=>t.id===c.ai.id)})));
+
+    // Round 2
+    setPhase(`Rodada 2 — ${top2.map(a=>a.name).join(" e ")} debatendo...`);
+    setCards(p=>[...p,...top2.map(ai=>({id:`${ai.id}-r2`,ai,text:"",round:1,votes:[],avgScore:null,isWinner:false,typing:true}))]);
+    const r2={};
+    await Promise.all(top2.map(async ai=>{
+      const avg=avgs.find(x=>x.ai.id===ai.id)?.avg.toFixed(1)||"?";
+      const text=await callAI(ai,P_ROUND2(ai.name,t,r1[ai.id],avg,userContext),keys);
+      r2[ai.id]=text;
+      setCards(p=>p.map(c=>c.id===`${ai.id}-r2`?{...c,text,typing:false}:c));
+    }));
+
+    // Voting R2
+    setPhase("Rodada 2 — votando...");
+    const rv2={}; top2.forEach(ai=>{rv2[ai.id]=[];});
+    await Promise.all(sel.map(async voter=>{
+      for(const target of top2){
+        if(voter.id===target.id) continue;
+        const vote=await getVote(voter,target,r2[target.id],keys);
+        rv2[target.id].push({voterAI:voter,...vote});
+        setCards(p=>p.map(c=>{
+          if(c.id!==`${target.id}-r2`) return c;
+          const nv=[...c.votes,{voterAI:voter,...vote}];
+          return {...c,votes:nv,avgScore:nv.reduce((a,v)=>a+v.score,0)/nv.length};
+        }));
+      }
+    }));
+    updateScores(Object.fromEntries(top2.map(ai=>[ai.id,rv2[ai.id]])));
+
+    const r2sorted=top2.map(ai=>({ai,avg:rv2[ai.id].length>0?rv2[ai.id].reduce((a,v)=>a+v.score,0)/rv2[ai.id].length:0})).sort((a,b)=>b.avg-a.avg);
+    const winner=r2sorted[0].ai;
+    setCards(p=>p.map(c=>({...c,isWinner:c.id===`${winner.id}-r2`?true:c.id.endsWith("-r2")?false:c.isWinner})));
+
+    // Conclusion
+    setPhase("Gerando conclusão final...");
+    setConclusionCard({typing:true});
+    const allRes=sel.map(ai=>`**${ai.name}**: ${r1[ai.id]}\n${r2[ai.id]?`**${ai.name} (R2)**: ${r2[ai.id]}\n`:""}`).join("\n");
+    const conclusion=await callClaude(P_CONCLUSION(winner.name,t,allRes,userContext));
+    setConclusionCard({typing:false,text:conclusion});
+    setPhase(""); setRunning(false);
+  };
+
+  const suggestions=["Qual a melhor linguagem para aprender em 2025?","IA vai substituir humanos no trabalho?","Vale a pena usar TypeScript em todo projeto?"];
+
+  return <div style={{minHeight:"100vh",background:"#080808",color:"#e0e0e0",display:"flex",flexDirection:"column"}}>
+
+    {showSettings&&<Settings keys={keys} setKeys={setKeys} activeAIs={activeAIs} toggleAI={toggleAI} onClose={()=>setShowSettings(false)}/>}
+
+    {showContext&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+      <div style={{background:"#1a1a1a",borderRadius:"22px 22px 0 0",padding:"0 0 32px"}}>
+        <div style={{display:"flex",justifyContent:"center",padding:"14px 0 8px"}}><div style={{width:42,height:4,borderRadius:2,background:"#3a3a3a"}}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 20px 16px",borderBottom:"1px solid #2a2a2a"}}>
+          <div><div style={{fontSize:17,fontWeight:700,color:"#fff"}}>🧍 Contexto Fixo</div><div style={{fontSize:12,color:"#666",marginTop:3}}>Vai junto em todos os prompts</div></div>
+          <button onClick={()=>setShowContext(false)} style={{background:"#2a2a2a",color:"#aaa",width:34,height:34,borderRadius:10,fontSize:16}}>✕</button>
+        </div>
+        <div style={{padding:"16px 20px 8px"}}>
+          <textarea value={userContext} onChange={e=>saveContext(e.target.value)} placeholder="Ex: Sou desenvolvedor React sênior, prefiro respostas práticas..." rows={6}
+            style={{width:"100%",background:"#141414",border:"1.5px solid #333",borderRadius:12,padding:"12px 14px",color:"#e0e0e0",fontSize:14,lineHeight:1.7,fontFamily:"inherit",resize:"none",boxSizing:"border-box"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:10}}>
+            <span style={{fontSize:11,color:"#444"}}>{userContext.length} caracteres</span>
+            {userContext&&<button onClick={()=>saveContext("")} style={{background:"none",color:"#555",fontSize:12}}>🗑 limpar</button>}
+          </div>
+        </div>
+      </div>
+    </div>}
+
+    {/* Header */}
+    <div style={{padding:"13px 16px",borderBottom:"1px solid #181818",background:"#0a0a0a",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:100}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:22}}>🧠</span>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:"#fff",letterSpacing:0.5}}>AI CONFERENCE</div>
+          <div style={{fontSize:10,color:"#444"}}>{topic||`${activeAIs.length} IAs ativas`}</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        {AIS.filter(a=>activeAIs.includes(a.id)).map(a=><span key={a.id} style={{fontSize:16}}>{a.emoji}</span>)}
+        <button onClick={()=>setShowSettings(true)} style={{marginLeft:4,background:"#1a1a1a",border:"1px solid #2a2a2a",color:"#ccc",width:38,height:38,borderRadius:10,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
+        <button onClick={()=>setShowContext(c=>!c)} style={{background:userContext?"#1a2a1a":"#1a1a1a",border:`1px solid ${userContext?"#10A37F55":"#2a2a2a"}`,color:userContext?"#10A37F":"#666",width:38,height:38,borderRadius:10,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>🧍</button>
+      </div>
+    </div>
+
+    {/* Content */}
+    <div style={{flex:1,overflowY:"auto",padding:"16px 14px 8px",maxWidth:800,width:"100%",margin:"0 auto"}}>
+      {cards.length===0&&!running&&<div style={{textAlign:"center",paddingTop:40,animation:"fi 0.5s ease"}}>
+        <div style={{fontSize:52,marginBottom:12}}>🧠</div>
+        <div style={{color:"#555",fontSize:15,marginBottom:6,fontWeight:600}}>Sala de conferência pronta</div>
+        <div style={{color:"#333",fontSize:12,lineHeight:1.9,marginBottom:24}}>As IAs respondem → votam umas nas outras<br/>As 2 melhores debatem → a vencedora conclui</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"center"}}>
+          {suggestions.map(s=><button key={s} onClick={()=>setPrompt(s)} style={{background:"#111",border:"1px solid #222",color:"#777",padding:"10px 18px",borderRadius:22,fontSize:12,maxWidth:340}}>{s}</button>)}
+        </div>
+      </div>}
+
+      {[0,1].map(round=>{
+        const rc=cards.filter(c=>c.round===round);
+        if(!rc.length) return null;
+        return <div key={round}>
+          <div style={{fontSize:10,color:"#3a3a3a",letterSpacing:2,marginBottom:10,marginTop:round===1?20:0,borderTop:round===1?"1px solid #181818":"none",paddingTop:round===1?20:0}}>
+            {round===0?"RODADA 1 — RESPOSTAS":"RODADA 2 — TOP 2 DEBATEM"}
+          </div>
+          {rc.map(c=><MessageCard key={c.id} ai={c.ai} text={c.text} typing={c.typing} round={c.round} votes={c.votes} avgScore={c.avgScore} isWinner={c.isWinner}/>)}
+        </div>;
+      })}
+
+      {conclusionCard&&<div>
+        <div style={{fontSize:10,color:"#3a3a3a",letterSpacing:2,marginBottom:10,marginTop:20,borderTop:"1px solid #181818",paddingTop:20}}>CONCLUSÃO</div>
+        <ConclusionCard text={conclusionCard.text} typing={conclusionCard.typing}/>
+      </div>}
+
+      {phase&&<div style={{textAlign:"center",fontSize:11,color:"#3a3a3a",padding:"10px 0",letterSpacing:0.5,animation:"fi 0.3s ease"}}>{phase}</div>}
+      <div ref={bottomRef}/>
+    </div>
+
+    <Scoreboard scores={scores} activeAIs={activeAIs}/>
+
+    {/* Input */}
+    <div style={{padding:"10px 14px 18px",borderTop:"1px solid #141414",background:"#090909"}}>
+      <div style={{maxWidth:800,margin:"0 auto",display:"flex",gap:8,alignItems:"flex-end"}}>
+        <div style={{flex:1,background:"#121212",border:"1px solid #222",borderRadius:14,padding:"10px 14px"}}>
+          <textarea ref={taRef} value={prompt}
+            onChange={e=>{setPrompt(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,110)+"px";}}
+            onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();run();}}}
+            placeholder="Novo tema para conferência..." disabled={running} rows={1}
+            style={{width:"100%",background:"transparent",border:"none",color:"#e0e0e0",fontSize:15,lineHeight:1.6,maxHeight:110,overflow:"auto",fontFamily:"inherit"}}/>
+        </div>
+        <button onClick={run} disabled={running||!prompt.trim()}
+          style={{background:running||!prompt.trim()?"#1a1a1a":"#D97757",color:running||!prompt.trim()?"#444":"#000",width:46,height:46,borderRadius:12,fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background 0.2s"}}>
+          {running?"⏳":"▶"}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
